@@ -1,0 +1,18 @@
+﻿# Ignore other folders and markdown except README
+other/
+*.md
+!README.md
+# Ignore image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.webp
+# Ignore node_modules and build artifacts
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+.DS_Store

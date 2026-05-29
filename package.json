@@ -1,0 +1,12 @@
+{
+  "name": "driver-drowsiness-detection",
+  "version": "1.0.0",
+  "description": "Root package for Driver Drowsiness Detection project",
+  "scripts": {
+    "install:all": "npm install --prefix frontend && npm install --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev": "npx concurrently --kill-others \"npm run dev --prefix frontend\" \"npm run dev --prefix backend\"",
+    "start": "npx concurrently --kill-others \"npm run dev --prefix frontend\" \"npm start --prefix backend\""
+  }
+}
