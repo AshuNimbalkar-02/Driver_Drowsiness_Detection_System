@@ -109,12 +109,28 @@ const LANGUAGES = {
     }
 };
 
+// Threshold limits for drowsiness, yawning, and blinking
+// EAR < 0.21 indicates eye closure (drowsiness)
+// MAR > 0.55 indicates mouth wide open (yawning)
+// EAR < 0.17 indicates deep closure of a blink
 const EAR_THRESHOLD = 0.21, MAR_THRESHOLD = 0.55, BLINK_THRESHOLD = 0.17;
+
+// MediaPipe Face Mesh landmark point indices for left eye, right eye, and mouth
 const LEFT_EYE = [362, 385, 387, 263, 373, 380], RIGHT_EYE = [33, 160, 158, 133, 153, 144], MOUTH = [13, 14, 61, 291];
 
+// Calculates the standard 2D Euclidean distance between two points: d = sqrt((x1 - x2)^2 + (y1 - y2)^2)
 const dist = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+
+// Calculates the Eye Aspect Ratio (EAR) using vertical heights divided by 2 * horizontal width
 const calculateEAR = (l, ids) => (dist(l[ids[1]], l[ids[5]]) + dist(l[ids[2]], l[ids[4]])) / (2.0 * dist(l[ids[0]], l[ids[3]]));
+
+// Calculates the Mouth Aspect Ratio (MAR) using vertical lip gap divided by horizontal mouth corners
 const calculateMAR = (l) => dist(l[13], l[14]) / dist(l[61], l[291]);
+
+// Determine API base path dynamically for local development and Vercel hosting
+const API_BASE = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+    ? 'http://localhost:5000'
+    : '/_/backend';
 
 function App() {
     const webcamRef = useRef(null), canvasRef = useRef(null), alarmRef = useRef(null);
@@ -164,7 +180,7 @@ function App() {
         setLogs(p => [{ time: timeStr, msg, type }, ...p].slice(0, 15));
         
         // Post logs to Express backend API
-        fetch('http://localhost:5000/api/logs', {
+        fetch(`${API_BASE}/api/logs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -187,116 +203,142 @@ function App() {
         if ('vibrate' in navigator) navigator.vibrate([400, 100, 400]);
     };
 
+    // Callback function triggered whenever MediaPipe Face Mesh generates new results from a video frame
     const onResults = useCallback((res) => {
+        // Guard clause: Return early if the webcam or canvas reference is not yet loaded
         if (!webcamRef.current?.video || !canvasRef.current) return;
         const canvas = canvasRef.current, video = webcamRef.current.video;
+        // Dynamically adjust canvas dimensions to match the raw incoming video feed resolution
         if (canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+        // Get the 2D drawing context and clear the canvas for the new frame redraw
         const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        // Check if any face landmarks are successfully detected in the frame
         if (res.multiFaceLandmarks?.[0]) {
-            const l = res.multiFaceLandmarks[0];
+            const l = res.multiFaceLandmarks[0]; // Retrieve the list of 478 landmark points for the first detected face
+            // Calculate the Eye Aspect Ratio (EAR) as the average of the left eye and right eye EARs
             let ear = (calculateEAR(l, LEFT_EYE) + calculateEAR(l, RIGHT_EYE)) / 2;
+            // Calculate the Mouth Aspect Ratio (MAR) to evaluate lip separation
             let mar = calculateMAR(l);
+            // Calculate head yaw/rotation ratio by comparing nose-to-left-cheek vs. nose-to-right-cheek distance
             const yaw = dist(l[1], l[234]) / dist(l[1], l[454]);
+            // Get absolute head yaw deviation from 1.0 (where 1.0 means looking straight forward)
             const yawDiff = Math.abs(yaw - 1.0);
 
-            // Record ML dataset sample if currently recording (throttled to 10 FPS)
+            // Record ML dataset sample if currently recording (throttled to 10 FPS / every 100 milliseconds)
             if (isRecordingML && mlRecordClass !== null) {
                 const now = Date.now();
                 if (now - lastRecordTime.current > 100) {
+                    // Save input parameters [EAR, MAR, YawDiff] and target class to mlpDataset state
                     setMlpDataset(prev => [...prev, { inputs: [ear, mar, yawDiff], target: mlRecordClass }]);
-                    lastRecordTime.current = now;
-                    if ('vibrate' in navigator) navigator.vibrate(20);
+                    lastRecordTime.current = now; // Update the throttle timestamp
+                    if ('vibrate' in navigator) navigator.vibrate(20); // Provide short haptic buzz on mobile/touch screen devices
                 }
             }
 
+            // If demo mode is active, simulate active eye closure and yawning values
             if (demoMode) {
-                ear = 0.15;
-                mar = 0.65;
+                ear = 0.15; // Set simulated low EAR (closed eyes)
+                mar = 0.65; // Set simulated high MAR (wide yawn)
             }
+            // Update react state to display current numerical EAR and MAR values in the UI
             setValues({ ear, mar });
 
+            // If customized neural network model is selected and has been trained
             if (useCustomModel && isModelTrained) {
-                // Forward propagation through custom trained network
+                // Forward propagation through the custom browser-trained MLP model
                 const { probs } = mlpModel.forward([ear, mar, yawDiff]);
+                // Set the model probabilities in the state to update HUD progress bars
                 setMlProbabilities(probs);
                 
+                // Get the class index with the highest probability
                 const predClass = probs.indexOf(Math.max(...probs));
+                // Extract the highest probability percentage
                 const maxProb = probs[predClass];
 
-                // Prediction handling: Class 0 = Alert, Class 1 = Drowsy, Class 2 = Distracted
-                if (predClass === 1 && maxProb > 0.5) { // Drowsy prediction
-                    frameCounter.current++;
+                // Handles predictions: Class 0 = Alert, Class 1 = Drowsy, Class 2 = Distracted
+                if (predClass === 1 && maxProb > 0.5) { // Predicted Drowsy with more than 50% confidence
+                    frameCounter.current++; // Increment sequential frames counter
+                    // Trigger alert if eyes are closed for more than 10 consecutive frames
                     if (frameCounter.current > 10 && !isDrowsy) {
-                        setIsDrowsy(true); alarmRef.current?.play(); speak('wake');
-                        setSafetyScore(sc => Math.max(0, sc - 5)); addLog("ML: Drowsiness Alert Triggered!", "danger", ear, mar);
+                        setIsDrowsy(true); alarmRef.current?.play(); speak('wake'); // Set flag, play alarm tone, speak voice alert
+                        setSafetyScore(sc => Math.max(0, sc - 5)); addLog("ML: Drowsiness Alert Triggered!", "danger", ear, mar); // Decrement safety score and log event
                     }
-                    setIsDistracted(false);
-                } else if (predClass === 2 && maxProb > 0.5) { // Distracted prediction
-                    distractCounter.current++;
+                    setIsDistracted(false); // Clear distraction status
+                } else if (predClass === 2 && maxProb > 0.5) { // Predicted Distracted with more than 50% confidence
+                    distractCounter.current++; // Increment sequential distraction frames counter
+                    // Trigger alert if distracted for more than 15 consecutive frames
                     if (distractCounter.current > 15 && !isDistracted) {
-                        setIsDistracted(true); speak('eyes'); setStats(s => ({ ...s, distractions: s.distractions + 1 }));
-                        setSafetyScore(sc => Math.max(0, sc - 0.5)); addLog("ML: Distraction Event Registered", "warning", ear, mar);
+                        setIsDistracted(true); speak('eyes'); setStats(s => ({ ...s, distractions: s.distractions + 1 })); // Set flag, play alert voice, increment stats
+                        setSafetyScore(sc => Math.max(0, sc - 0.5)); addLog("ML: Distraction Event Registered", "warning", ear, mar); // Decrement safety score and log event
                     }
-                    if (isDrowsy) { setIsDrowsy(false); alarmRef.current?.stop(); }
-                } else { // Alert prediction
-                    frameCounter.current = 0;
-                    distractCounter.current = 0;
+                    if (isDrowsy) { setIsDrowsy(false); alarmRef.current?.stop(); } // Cancel drowsiness state & stop alarm if active
+                } else { // Predicted Alert with highest confidence
+                    frameCounter.current = 0; // Reset sequential drowsiness frame counter
+                    distractCounter.current = 0; // Reset sequential distraction frame counter
                     if (isDrowsy) {
-                        setIsDrowsy(false); alarmRef.current?.stop();
-                        addLog("ML: State Normal (Alertness Restored)", "success", ear, mar);
+                        setIsDrowsy(false); alarmRef.current?.stop(); // Turn off drowsiness alert & stop active buzzer audio
+                        addLog("ML: State Normal (Alertness Restored)", "success", ear, mar); // Log recovery
                     }
-                    setIsDistracted(false);
+                    setIsDistracted(false); // Reset distraction state
                 }
             } else {
-                // Blink & State Engine
+                // FALLBACK: Traditional threshold-based state machine logic
+
+                // Blink detection: transition from open eye to closed eye
                 if (ear < BLINK_THRESHOLD && lastState.current === 'OPEN') lastState.current = 'CLOSED';
+                // Blink registration: transition from closed eye to open eye
                 else if (ear > EAR_THRESHOLD && lastState.current === 'CLOSED') {
                     setStats(s => ({ ...s, blinks: s.blinks + 1 })); lastState.current = 'OPEN'; addLog("Neuro-Sync: Blink Locked.", "system", ear, mar);
                 }
 
-                // Distraction logic
+                // Head turn / Distraction detection
+                // If head turns left or right (yaw ratio is outside normal bounds [0.6, 1.6])
                 if ((yaw < 0.6 || yaw > 1.6) && !calibrating) {
-                    distractCounter.current++;
+                    distractCounter.current++; // Increment consecutive frames counter
+                    // Trigger alert if looking away for more than 15 consecutive frames
                     if (distractCounter.current > 15 && !isDistracted) {
-                        setIsDistracted(true); speak('eyes'); setStats(s => ({ ...s, distractions: s.distractions + 1 }));
-                        setSafetyScore(sc => Math.max(0, sc - 0.5)); addLog("Attention Divergence!", "warning", ear, mar);
+                        setIsDistracted(true); speak('eyes'); setStats(s => ({ ...s, distractions: s.distractions + 1 })); // Play warning, update status
+                        setSafetyScore(sc => Math.max(0, sc - 0.5)); addLog("Attention Divergence!", "warning", ear, mar); // Log warning event
                     }
-                } else { distractCounter.current = 0; setIsDistracted(false); }
+                } else { distractCounter.current = 0; setIsDistracted(false); } // Reset distraction counter and status if looking straight
 
-                // Fatigue logic
+                // Closed Eyes / Drowsiness detection
                 if (ear < EAR_THRESHOLD && !calibrating) {
-                    frameCounter.current++;
+                    frameCounter.current++; // Increment consecutive closed-eyes frame counter
+                    // Trigger alert if eyes are closed for more than 10 consecutive frames
                     if (frameCounter.current > 10 && !isDrowsy) {
-                        setIsDrowsy(true); alarmRef.current?.play(); speak('wake');
-                        setSafetyScore(sc => Math.max(0, sc - 5)); addLog("CRITICAL COLLISION RISK", "danger", ear, mar);
+                        setIsDrowsy(true); alarmRef.current?.play(); speak('wake'); // Active alert status, start alarm loop, speak voice alert
+                        setSafetyScore(sc => Math.max(0, sc - 5)); addLog("CRITICAL COLLISION RISK", "danger", ear, mar); // Log critical warning
                     }
                 } else {
-                    frameCounter.current = 0;
+                    frameCounter.current = 0; // Reset closed-eyes frame counter if eyes are open
                     if (isDrowsy) {
-                        setIsDrowsy(false);
-                        alarmRef.current?.stop();
-                        addLog("State: Cognitive Restore.", "success", ear, mar);
+                        setIsDrowsy(false); // Cancel drowsiness status
+                        alarmRef.current?.stop(); // Turn off active alarm loop
+                        addLog("State: Cognitive Restore.", "success", ear, mar); // Log alertness recovery
                     }
                 }
 
-                // 🏆 Stage-1 Fatigue Logic (Yawning)
+                // Yawning Detection (Stage-1 Fatigue Logic)
+                // If mouth aspect ratio exceeds threshold, calibrate/drowsiness is not active, and eyes are open
                 if (mar > MAR_THRESHOLD && !calibrating && !isDrowsy) {
-                    if (lastState.current !== 'YAWNING') {
-                        setStats(s => ({ ...s, yawns: s.yawns + 1 }));
-                        lastState.current = 'YAWNING';
-                        addLog("Fatigue Signature: YAWN_DETECTED", "warning", ear, mar);
-                        setSafetyScore(sc => Math.max(0, sc - 1));
+                    if (lastState.current !== 'YAWNING') { // Ensure we only count the start of a yawn transition
+                        setStats(s => ({ ...s, yawns: s.yawns + 1 })); // Increment yawn statistics count
+                        lastState.current = 'YAWNING'; // Update state marker
+                        addLog("Fatigue Signature: YAWN_DETECTED", "warning", ear, mar); // Log warning event
+                        setSafetyScore(sc => Math.max(0, sc - 1)); // Decrement safety score slightly
                     }
                 } else if (mar < MAR_THRESHOLD * 0.8 && lastState.current === 'YAWNING') {
-                    lastState.current = 'OPEN';
+                    lastState.current = 'OPEN'; // Reset state marker once mouth has sufficiently closed
                 }
             }
 
+            // Append newest computed values to the sliding chart data buffer (keep last 60 points)
             chartRef.current = [...chartRef.current, { ear, mar: mar * 0.4 }].slice(-60);
-            setChartData([...chartRef.current]);
+            setChartData([...chartRef.current]); // Update chart data state to trigger recharts graph update
 
-            // Augmented Wireframe Drawing
+            // Setup canvas styling based on driver safety state
             ctx.lineWidth = 0.8; ctx.strokeStyle = isDrowsy ? '#ff0044' : isDistracted ? '#ffaa00' : '#00f2ff';
             const drawPath = (ids, close = true) => {
                 ctx.beginPath(); ids.forEach((id, i) => {
@@ -422,7 +464,7 @@ function App() {
                                 onClick={async () => {
                                     setIsSyncing(true);
                                     try {
-                                        const res = await fetch('http://localhost:5000/api/sync', {
+                                        const res = await fetch(`${API_BASE}/api/sync`, {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
                                             body: JSON.stringify({ fleetId, stats })
