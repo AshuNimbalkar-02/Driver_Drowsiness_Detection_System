@@ -323,3 +323,81 @@ body, html {
     0%, 100% { opacity: 0.3; transform: scale(0.8); }
     50% { opacity: 1; transform: scale(1.1); }
 }
+
+/* ========================================================= */
+/* RESPONSIVE DESIGN (MOBILE / TABLET)                       */
+/* ========================================================= */
+
+@media (max-width: 1200px) {
+  .dashboard-container {
+    grid-template-columns: 280px 1fr 300px;
+  }
+}
+
+@media (max-width: 1024px) {
+  body, html {
+    overflow-y: auto;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .dashboard-container {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    overflow-y: visible;
+  }
+
+  .webcam-wrapper {
+    min-height: 60vh;
+  }
+
+  .sidebar, .analytics-panel {
+    padding: 1.5rem;
+  }
+
+  .alert-title {
+    font-size: 5rem !important;
+    text-shadow: 0 0 30px #ff0055;
+    line-height: 1 !important;
+  }
+
+  .alert-msg {
+    font-size: 1.5rem !important;
+  }
+  
+  .alert-content {
+    padding: 2rem !important;
+    transform: scale(1) !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .dashboard-container {
+    padding: 0.5rem;
+    gap: 0.5rem;
+  }
+
+  .stat-card {
+    padding: 1rem;
+  }
+
+  .webcam-wrapper {
+    min-height: 50vh;
+    border-radius: 1rem;
+  }
+
+  .alert-title {
+    font-size: 3rem !important;
+    letter-spacing: -2px !important;
+  }
+  
+  .alert-content {
+    padding: 1.5rem !important;
+  }
+  
+  .hud-badge {
+    padding: 0.5rem 1rem;
+    font-size: 0.65rem;
+  }
+}
