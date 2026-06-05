@@ -1,5 +1,7 @@
 # Driver Drowsiness Detection System
 
+
+
 ## Project Overview
 
 Driver Drowsiness Detection System is a full-stack safety monitoring application built to detect driver fatigue and log safety events in real time. The project combines a React-based frontend for camera-driven attention tracking with an Express backend API that stores event logs and simulates fleet sync behavior.
