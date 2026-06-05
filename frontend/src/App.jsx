@@ -119,13 +119,13 @@ const EAR_THRESHOLD = 0.21, MAR_THRESHOLD = 0.55, BLINK_THRESHOLD = 0.17;
 const LEFT_EYE = [362, 385, 387, 263, 373, 380], RIGHT_EYE = [33, 160, 158, 133, 153, 144], MOUTH = [13, 14, 61, 291];
 
 // Calculates the standard 2D Euclidean distance between two points: d = sqrt((x1 - x2)^2 + (y1 - y2)^2)
-const dist = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+const dist = (p1, p2, w = 1, h = 1) => Math.sqrt(Math.pow((p1.x - p2.x) * w, 2) + Math.pow((p1.y - p2.y) * h, 2));
 
 // Calculates the Eye Aspect Ratio (EAR) using vertical heights divided by 2 * horizontal width
-const calculateEAR = (l, ids) => (dist(l[ids[1]], l[ids[5]]) + dist(l[ids[2]], l[ids[4]])) / (2.0 * dist(l[ids[0]], l[ids[3]]));
+const calculateEAR = (l, ids, w = 1, h = 1) => (dist(l[ids[1]], l[ids[5]], w, h) + dist(l[ids[2]], l[ids[4]], w, h)) / (2.0 * dist(l[ids[0]], l[ids[3]], w, h));
 
 // Calculates the Mouth Aspect Ratio (MAR) using vertical lip gap divided by horizontal mouth corners
-const calculateMAR = (l) => dist(l[13], l[14]) / dist(l[61], l[291]);
+const calculateMAR = (l, w = 1, h = 1) => dist(l[13], l[14], w, h) / dist(l[61], l[291], w, h);
 
 // Determine API base path dynamically for local development and Vercel hosting
 const API_BASE = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
@@ -217,11 +217,11 @@ function App() {
         if (res.multiFaceLandmarks?.[0]) {
             const l = res.multiFaceLandmarks[0]; // Retrieve the list of 478 landmark points for the first detected face
             // Calculate the Eye Aspect Ratio (EAR) as the average of the left eye and right eye EARs
-            let ear = (calculateEAR(l, LEFT_EYE) + calculateEAR(l, RIGHT_EYE)) / 2;
+            let ear = (calculateEAR(l, LEFT_EYE, canvas.width, canvas.height) + calculateEAR(l, RIGHT_EYE, canvas.width, canvas.height)) / 2;
             // Calculate the Mouth Aspect Ratio (MAR) to evaluate lip separation
-            let mar = calculateMAR(l);
+            let mar = calculateMAR(l, canvas.width, canvas.height);
             // Calculate head yaw/rotation ratio by comparing nose-to-left-cheek vs. nose-to-right-cheek distance
-            const yaw = dist(l[1], l[234]) / dist(l[1], l[454]);
+            const yaw = dist(l[1], l[234], canvas.width, canvas.height) / dist(l[1], l[454], canvas.width, canvas.height);
             // Get absolute head yaw deviation from 1.0 (where 1.0 means looking straight forward)
             const yawDiff = Math.abs(yaw - 1.0);
 
